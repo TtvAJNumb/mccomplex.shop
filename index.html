@@ -1311,8 +1311,30 @@ function updatePlayerCount(serverId){
   }
 }
 
-function scheduleCountTick(serverId){
-  const delay = 60000 + Math.random() * 60000; // randomized 60,000-120,000ms
+const PLAYER_COUNT_STORAGE_KEY = 'mc_complex_player_counts_v1';
+
+function savePlayerCountState(){
+  try{
+    const data = {};
+    Object.keys(PLAYER_COUNT_BOUNDS).forEach(id => {
+      data[id] = { online: SERVERS[id].online, nextTickAt: SERVERS[id]._nextTickAt };
+    });
+    localStorage.setItem(PLAYER_COUNT_STORAGE_KEY, JSON.stringify(data));
+  }catch(e){ /* localStorage unavailable, fall back to in-memory only */ }
+}
+
+function loadPlayerCountState(){
+  try{
+    const raw = localStorage.getItem(PLAYER_COUNT_STORAGE_KEY);
+    if(!raw) return null;
+    return JSON.parse(raw);
+  }catch(e){ return null; }
+}
+
+function scheduleCountTick(serverId, overrideDelay){
+  const delay = (typeof overrideDelay === 'number') ? overrideDelay : (60000 + Math.random() * 60000); // 60,000-120,000ms
+  SERVERS[serverId]._nextTickAt = Date.now() + delay;
+  savePlayerCountState();
   setTimeout(() => {
     updatePlayerCount(serverId);
     scheduleCountTick(serverId); // reschedule with a fresh random delay, independent of the others
@@ -1320,9 +1342,34 @@ function scheduleCountTick(serverId){
 }
 
 function startPlayerCountTickers(){
-  Object.keys(PLAYER_COUNT_BOUNDS).forEach(scheduleCountTick);
-}
+  const saved = loadPlayerCountState();
+  Object.keys(PLAYER_COUNT_BOUNDS).forEach(serverId => {
+    const bounds = PLAYER_COUNT_BOUNDS[serverId];
+    const savedEntry = saved && saved[serverId];
 
+    if(savedEntry && typeof savedEntry.online === 'number'){
+      const restored = Math.max(bounds.min, Math.min(bounds.max, savedEntry.online));
+      SERVERS[serverId].online = restored;
+    }
+
+    let remaining = 60000 + Math.random() * 60000;
+    if(savedEntry && typeof savedEntry.nextTickAt === 'number'){
+      const timeLeft = savedEntry.nextTickAt - Date.now();
+      remaining = timeLeft > 0 ? timeLeft : 500;
+    }
+    scheduleCountTick(serverId, remaining);
+  });
+  Object.keys(PLAYER_COUNT_BOUNDS).forEach(serverId => {
+    const el = document.getElementById(serverId + '-count');
+    if(el) el.textContent = SERVERS[serverId].online.toLocaleString();
+  });
+  const totalEl = document.getElementById('total-online-count');
+  if(totalEl){
+    const total = Object.values(SERVERS).reduce((sum, srv) => sum + srv.online, 0);
+    totalEl.textContent = total.toLocaleString();
+  }
+}
+startPlayerCountTickers();
 /* ============================= HELPERS ============================= */
 function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function money(n){ return '$'+n.toFixed(2); }
